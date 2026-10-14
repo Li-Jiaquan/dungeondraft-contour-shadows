@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 128 128">
+  <defs><clipPath id="shadow-plane"><path d="M51 95 84 76 119 94 84 117Z"/></clipPath></defs>
+  <g clip-path="url(#shadow-plane)" fill="none" stroke="#b1b8c4" stroke-width="2.6" stroke-linecap="round">
+    <path d="m39 120 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45m-22 45 30-45"/>
+  </g>
+  <path d="M51 95 84 76 119 94 84 117Z" fill="none" stroke="#a3aab7" stroke-width="1.1" stroke-linejoin="round"/>
+  <g fill="none" stroke="#f4f5f5" stroke-width="5.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m18 38 33-19 33 19-33 19-33-19Z"/>
+    <path d="M18 38v38l33 20V57"/>
+    <path d="m51 57 33-19v38l-33 20"/>
+  </g>
+</svg>
