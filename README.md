@@ -14,12 +14,13 @@ Contour Shadows is a GDScript mod for Dungeondraft. It creates editable, contour
 - Erase parts of a generated shadow with a brush. Brush diameter is 2–512 map pixels and hardness is 0–100%. Strokes are stored in source-local coordinates and saved with the map.
 - Preview shadows in the editor, optionally follow source shape changes, undo the latest eraser stroke during the current editing session, and restore erased areas for selected sources.
 - Use the same map-space shadow direction even when a source is rotated, scaled, or mirrored.
+- Switch between English and Simplified Chinese without changing map data or restarting the mod.
 
 ### Quick start
 
-1. Open **Effects → Contour Shadows**.
+1. Open **Effects → Contour Shadows / 轮廓投影**. Select **English** under **Language / 语言** at the top of the panel.
 2. Choose **Select Objects**, select Props or Pathways on the current floor, then choose **Generate Selected**. Use **Generate Floor** to process the current floor.
-3. Set **Global** or **Individual** mode below Projection Parameters. Individual mode applies changed fields to the recorded targets and leaves their other effective values alone.
+3. Choose **Global** or **Per-Object** below **Shadow Parameters**. Per-Object mode applies changed fields to the recorded targets and leaves their other effective values alone.
 4. To erase, generate the target shadows first, enable the eraser, set its size and hardness, then drag on the canvas. Press Esc or change tools to leave eraser mode.
 5. Save the map with Dungeondraft’s **Ctrl+S** or Save button. Shadow settings and eraser strokes are stored in the map data.
 
@@ -27,7 +28,9 @@ Props show Dungeondraft’s native selection outline while the mod tool is activ
 
 ### Install
 
-Download [contour-shadows-0.3.1.zip](dist/contour-shadows-0.3.1.zip), extract it, and copy the `contour_shadows` folder into Dungeondraft’s `mods` folder. The `.ddmod` file should be at `mods/contour_shadows/contour_shadows.ddmod`. Restart Dungeondraft after installation.
+On first use, the interface follows Dungeondraft's active locale. Choose **English** or **简体中文** from **Language / 语言** at the top of the panel to override it. The choice is saved locally and does not change map data.
+
+Download [contour-shadows-0.4.0.zip](dist/contour-shadows-0.4.0.zip), extract it, and copy the `contour_shadows` folder into Dungeondraft’s `mods` folder. The `.ddmod` file should be at `mods/contour_shadows/contour_shadows.ddmod`. Restart Dungeondraft after installation.
 
 The repository also includes a PowerShell installer that preserves an existing installation in a timestamped backup:
 
@@ -78,6 +81,7 @@ The package script requires an absolute output path outside `mod/` and will not 
 - 可用橡皮擦局部擦除生成的阴影，笔刷直径为 2–512 地图像素，硬度为 0–100%。笔画保存在源对象局部坐标，并随地图保存。
 - 支持编辑器预览、可选的来源形状跟随更新、当前编辑会话中的上一步擦除撤销，以及恢复所选来源的擦除区域。
 - 对象旋转、缩放或镜像时，阴影方向仍按地图坐标计算。
+- 可即时切换简体中文与 English，语言偏好只保存在本机。
 
 ### 快速开始
 
@@ -91,7 +95,9 @@ The package script requires an absolute output path outside `mod/` and will not 
 
 ### 安装
 
-下载 [contour-shadows-0.3.1.zip](dist/contour-shadows-0.3.1.zip)，解压后将 `contour_shadows` 文件夹复制到 Dungeondraft 的 `mods` 文件夹。确认 `.ddmod` 位于 `mods/contour_shadows/contour_shadows.ddmod`，然后重启 Dungeondraft。
+可在面板顶部切换简体中文或 English。语言偏好保存在本机，不会写入地图数据。
+
+下载 [contour-shadows-0.4.0.zip](dist/contour-shadows-0.4.0.zip)，解压后将 `contour_shadows` 文件夹复制到 Dungeondraft 的 `mods` 文件夹。确认 `.ddmod` 位于 `mods/contour_shadows/contour_shadows.ddmod`，然后重启 Dungeondraft。
 
 仓库提供 PowerShell 安装脚本；若目标位置已有插件，脚本会先将旧目录移到带时间戳的备份目录：
 

@@ -1,7 +1,7 @@
 var script_class = "tool"
 
 const TOOL_ID = "contour_shadows"
-const DISPLAY_NAME = "轮廓投影"
+const DISPLAY_NAME = {"key": "plugin.name", "args": []}
 const SETTINGS_PATH = "user://contour_shadows/settings.json"
 const MAP_DATA_KEY = "contour_shadows"
 const RECIPE_VERSION = 2
@@ -20,6 +20,11 @@ const PARAMETER_REFRESH_DEBOUNCE_SECONDS = 0.18
 const ERASER_FRAME_PIXEL_BUDGET = 4096
 const ERASER_FRAME_TIME_BUDGET_USEC = 6000
 const ERASER_GPU_FOOTPRINT_THRESHOLD_PIXELS = 16384
+
+var language = "zh_CN"
+var _translator = null
+var _localized_controls = []
+var _language_selector = null
 
 var angle_degrees = 45.0
 var distance = 32.0
@@ -100,7 +105,7 @@ var _parameter_refresh_event_count = 0
 var _parameter_refresh_batch_count = 0
 var _follow_delay = 0.0
 var _follow_cursor = 0
-var _last_operation = "尚未生成"
+var _last_operation = {"key": "status.not_generated", "args": []}
 var _last_error = ""
 var _last_notice = ""
 var _last_selection_type = "unknown"
@@ -168,6 +173,99 @@ var _shadow_render_cache = {}
 var _world_ui_cursor_saved = {}
 
 
+func _message(key : String, arguments : Array = []) -> Dictionary:
+	return {"key": key, "args": arguments}
+
+
+func _has_message(message) -> bool:
+	return typeof(message) == TYPE_DICTIONARY or not str(message).empty()
+
+
+func _display_message(message) -> String:
+	if typeof(message) != TYPE_DICTIONARY or not message.has("key"):
+		return str(message)
+	if _translator == null:
+		var root = str(Global.Root)
+		if not root.ends_with("/"):
+			root += "/"
+		var catalog = ResourceLoader.load(root + "scripts/library/localization.gd", "", true)
+		if catalog != null:
+			_translator = catalog.new()
+	if _translator == null:
+		return str(message.key)
+	var arguments = []
+	for argument in message.get("args", []):
+		arguments.append(_display_message(argument) if typeof(argument) == TYPE_DICTIONARY and argument.has("key") else argument)
+	return _translator.text(str(message.key), language, arguments)
+
+
+func _bind_ui_message(control, message):
+	_localized_controls.append({"control": control, "message": message})
+	_set_panel_button_text(control, message)
+
+
+func _create_localized_check_button(message, initial : bool):
+	var control = _tool_panel.CreateCheckButton(_display_message(message), "", initial)
+	_bind_ui_message(control, message)
+	return control
+
+
+func _create_language_selector():
+	var row = HBoxContainer.new()
+	row.add_constant_override("separation", 6)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tool_panel.Align.add_child(row)
+	var label = _new_ui_label(_message("language.label"), row)
+	label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_language_selector = OptionButton.new()
+	_language_selector.rect_min_size = Vector2(0.0, 32.0)
+	_language_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_language_selector.add_item(_display_message(_message("language.zh")))
+	_language_selector.add_item(_display_message(_message("language.en")))
+	_language_selector.select(0 if language == "zh_CN" else 1)
+	_language_selector.connect("item_selected", self, "_on_language_selected")
+	row.add_child(_language_selector)
+
+
+func _on_language_selected(index : int):
+	if not _syncing_controls:
+		set_language("zh_CN" if index == 0 else "en")
+
+
+func set_language(locale : String, persist : bool = true) -> Dictionary:
+	if not locale in ["zh_CN", "en"]:
+		return {"ok": false, "error": _display_message(_message("error.language"))}
+	var old_title = _display_message(DISPLAY_NAME)
+	language = locale
+	for binding in _localized_controls:
+		if is_instance_valid(binding.control):
+			_set_panel_button_text(binding.control, binding.message)
+	var new_title = _display_message(DISPLAY_NAME)
+	_refresh_native_tool_title(_tool_panel, old_title, new_title)
+	if is_instance_valid(Global.Editor):
+		_refresh_native_tool_title(Global.Editor.Toolset, old_title, new_title)
+	_sync_controls()
+	_update_selection_label()
+	_update_multiselect_label()
+	_update_status()
+	_update_responsive_action_layout(true)
+	# UI preference only: no map recipe writes, render jobs, or selection changes.
+	if persist:
+		_save_global_settings()
+	return {"ok": true, "language": language}
+
+
+func _refresh_native_tool_title(node, old_title : String, new_title : String):
+	if not is_instance_valid(node):
+		return
+	for property in ["text", "hint_tooltip"]:
+		if _ui_has_property(node, property) and str(node.get(property)) == old_title:
+			node.set(property, new_title)
+	if node.has_method("get_children"):
+		for child in node.get_children():
+			_refresh_native_tool_title(child, old_title, new_title)
+
+
 func start():
 	_load_global_settings()
 	_cleanup_stale_selection_marks()
@@ -187,8 +285,8 @@ func start():
 	if shadow_mask_script != null:
 		_shadow_mask = shadow_mask_script.new()
 	if _renderer == null or _geometry == null or _path_source == null or _shadow_mask == null:
-		_last_error = "投影功能未能启动，请重新打开地图或检查插件安装。"
-		push_error("[contour-shadows] " + _last_error)
+		_last_error = _message("error.startup")
+		push_error("[contour-shadows] " + _display_message(_last_error))
 	_create_tool_panel()
 	print("[contour-shadows] ready; auto-generation is disabled")
 
@@ -220,7 +318,7 @@ func update(delta : float):
 
 func _create_tool_panel():
 	var icon_path = Global.Root + "icons/contour_shadows.png"
-	_tool_panel = Global.Editor.Toolset.CreateModTool(self, "Effects", TOOL_ID, DISPLAY_NAME, icon_path)
+	_tool_panel = Global.Editor.Toolset.CreateModTool(self, "Effects", TOOL_ID, _display_message(DISPLAY_NAME), icon_path)
 	for property in _tool_panel.get_property_list():
 		if str(property.get("name", "")) == "Tool":
 			var registered_tool = _tool_panel.get("Tool")
@@ -229,119 +327,120 @@ func _create_tool_panel():
 	if Global.Editor.Tools.has(TOOL_ID):
 		_attach_controller_meta(Global.Editor.Tools[TOOL_ID])
 	_tool_panel.BeginSection(false)
+	_create_language_selector()
 
-	var target_card = _create_ui_card("目标与生成")
-	_selection_label = _new_ui_label("已记录 0 个物件 · 0 条路径", target_card)
-	_status_label = _new_ui_label("就绪", target_card)
+	var target_card = _create_ui_card(_message("section.targets"))
+	_selection_label = _new_ui_label(_message("selection.initial"), target_card)
+	_status_label = _new_ui_label(_message("status.ready"), target_card)
 	_selection_action_row = VBoxContainer.new()
 	_selection_action_row.add_constant_override("separation", 4)
 	target_card.add_child(_selection_action_row)
-	_selection_action_button_a = _create_panel_button("选择对象")
+	_selection_action_button_a = _create_panel_button(_message("action.select"))
 	_selection_action_button_a.connect("pressed", self, "begin_selection_mode")
-	_selection_action_button_b = _create_panel_button("生成选中对象")
+	_selection_action_button_b = _create_panel_button(_message("action.generate_selected"))
 	_selection_action_button_b.connect("pressed", self, "generate_selected")
 	_selection_action_view_a = _reparent_ui_control(_selection_action_button_a, _selection_action_row)
 	_selection_action_view_b = _reparent_ui_control(_selection_action_button_b, _selection_action_row)
-	var current_button = _create_panel_button("生成当前层", true)
+	var current_button = _create_panel_button(_message("action.generate_floor"), true)
 	current_button.connect("pressed", self, "generate_current_level")
 	_reparent_ui_control(current_button, target_card)
 
-	var parameter_card = _create_ui_card("投影参数")
+	var parameter_card = _create_ui_card(_message("section.parameters"))
 	var adjustment_row = HBoxContainer.new()
 	adjustment_row.add_constant_override("separation", 4)
 	parameter_card.add_child(adjustment_row)
-	_global_adjust_button = _create_panel_button("全局调整")
+	_global_adjust_button = _create_panel_button(_message("mode.global"))
 	_global_adjust_button.connect("pressed", self, "set_adjustment_mode", ["global"])
-	_individual_adjust_button = _create_panel_button("单独调整")
+	_individual_adjust_button = _create_panel_button(_message("mode.individual"))
 	_individual_adjust_button.connect("pressed", self, "set_adjustment_mode", ["individual"])
 	_reparent_ui_control(_global_adjust_button, adjustment_row)
 	_reparent_ui_control(_individual_adjust_button, adjustment_row)
-	_scope_label = _new_ui_label("作用范围：全局默认", parameter_card)
-	_use_global_button = _create_panel_button("恢复为全局参数", true)
+	_scope_label = _new_ui_label(_message("scope.global"), parameter_card)
+	_use_global_button = _create_panel_button(_message("action.use_global"), true)
 	_use_global_button.connect("pressed", self, "use_global_settings_for_selected")
 	_reparent_ui_control(_use_global_button, parameter_card)
 
-	var angle_row = _create_ui_slider_row(parameter_card, "方向 °")
+	var angle_row = _create_ui_slider_row(parameter_card, _message("label.direction"))
 	_angle_value_label = angle_row.get_node("Label")
 	_angle_slider = _tool_panel.CreateSlider("", angle_degrees, 0.0, 359.0, 1.0, false)
 	_reparent_ui_slider(_angle_slider, angle_row)
-	var distance_row = _create_ui_slider_row(parameter_card, "距离 px")
+	var distance_row = _create_ui_slider_row(parameter_card, _message("label.distance"))
 	_distance_value_label = distance_row.get_node("Label")
 	_distance_slider = _tool_panel.CreateSlider("", distance, 0.0, 256.0, 1.0, false)
 	_reparent_ui_slider(_distance_slider, distance_row)
-	var blur_row = _create_ui_slider_row(parameter_card, "柔化 px")
+	var blur_row = _create_ui_slider_row(parameter_card, _message("label.softness"))
 	_blur_value_label = blur_row.get_node("Label")
 	_blur_slider = _tool_panel.CreateSlider("", blur_radius, 0.0, 64.0, 0.5, false)
 	_reparent_ui_slider(_blur_slider, blur_row)
-	var opacity_row = _create_ui_slider_row(parameter_card, "不透明度 %")
+	var opacity_row = _create_ui_slider_row(parameter_card, _message("label.opacity"))
 	_opacity_value_label = opacity_row.get_node("Label")
 	_opacity_slider = _tool_panel.CreateSlider("", opacity * 100.0, 0.0, 100.0, 1.0, false)
 	_reparent_ui_slider(_opacity_slider, opacity_row)
-	_new_ui_label("投影模式", parameter_card)
+	_new_ui_label(_message("label.projection"), parameter_card)
 	var mode_row = HBoxContainer.new()
 	mode_row.add_constant_override("separation", 4)
 	mode_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parameter_card.add_child(mode_row)
-	_offset_mode_button = _create_panel_button("短投影")
-	_sweep_mode_button = _create_panel_button("连续延展")
+	_offset_mode_button = _create_panel_button(_message("projection.offset"))
+	_sweep_mode_button = _create_panel_button(_message("projection.sweep"))
 	_offset_mode_button.connect("pressed", self, "_on_mode_choice_pressed", ["offset"])
 	_sweep_mode_button.connect("pressed", self, "_on_mode_choice_pressed", ["sweep"])
 	_reparent_ui_control(_offset_mode_button, mode_row)
 	_reparent_ui_control(_sweep_mode_button, mode_row)
 	_color_palette = _tool_panel.CreateColorPalette("contour_shadows_color", false, shadow_color.to_html(false), ["141519", "202127", "34303a", "51463e", "4c3b34"], false, false)
 	_reparent_ui_control(_color_palette, parameter_card)
-	_color_label = _new_ui_label("颜色 · #" + shadow_color.to_html(false), parameter_card)
+	_color_label = _new_ui_label(_message("label.color", [shadow_color.to_html(false)]), parameter_card)
 
-	var eraser_card = _create_ui_card("局部擦除")
-	_eraser_button = _tool_panel.CreateCheckButton("启用阴影橡皮擦", "", false)
+	var eraser_card = _create_ui_card(_message("section.eraser"))
+	_eraser_button = _create_localized_check_button(_message("eraser.enable"), false)
 	_eraser_button.connect("toggled", self, "_on_eraser_toggled")
 	_reparent_ui_control(_eraser_button, eraser_card)
-	var diameter_row = _create_ui_slider_row(eraser_card, "直径 px")
+	var diameter_row = _create_ui_slider_row(eraser_card, _message("eraser.diameter"))
 	_eraser_radius_value_label = diameter_row.get_node("Label")
 	_eraser_radius_slider = _tool_panel.CreateSlider("", eraser_radius * 2.0, 2.0, 512.0, 2.0, false)
 	_eraser_radius_slider.connect("value_changed", self, "_on_eraser_radius_changed")
 	_reparent_ui_slider(_eraser_radius_slider, diameter_row)
-	var hardness_row = _create_ui_slider_row(eraser_card, "硬度 %")
+	var hardness_row = _create_ui_slider_row(eraser_card, _message("eraser.hardness"))
 	_eraser_hardness_value_label = hardness_row.get_node("Label")
 	_eraser_hardness_slider = _tool_panel.CreateSlider("", eraser_hardness * 100.0, 0.0, 100.0, 1.0, false)
 	_eraser_hardness_slider.connect("value_changed", self, "_on_eraser_hardness_changed")
 	_reparent_ui_slider(_eraser_hardness_slider, hardness_row)
-	_new_ui_label("硬度越低边缘越柔；100% 为硬边。", eraser_card)
+	_new_ui_label(_message("eraser.help"), eraser_card)
 	var erase_actions = VBoxContainer.new()
 	erase_actions.add_constant_override("separation", 4)
 	eraser_card.add_child(erase_actions)
-	_erase_undo_button = _create_panel_button("撤销上一笔")
+	_erase_undo_button = _create_panel_button(_message("action.undo_erase"))
 	_erase_undo_button.connect("pressed", self, "undo_last_erase")
-	_restore_erasures_button = _create_panel_button("恢复选中擦除")
+	_restore_erasures_button = _create_panel_button(_message("action.restore_erase"))
 	_restore_erasures_button.connect("pressed", self, "restore_selected_erasures")
 	_reparent_ui_control(_erase_undo_button, erase_actions)
 	_reparent_ui_control(_restore_erasures_button, erase_actions)
 
-	var advanced_card = _create_ui_card("高级维护")
-	_advanced_toggle = _tool_panel.CreateCheckButton("显示高级维护选项", "", false)
+	var advanced_card = _create_ui_card(_message("section.advanced"))
+	_advanced_toggle = _create_localized_check_button(_message("advanced.show"), false)
 	_advanced_toggle.connect("toggled", self, "_on_advanced_toggled")
 	_reparent_ui_control(_advanced_toggle, advanced_card)
 	_advanced_container = VBoxContainer.new()
 	_advanced_container.add_constant_override("separation", 4)
 	_advanced_container.visible = false
 	advanced_card.add_child(_advanced_container)
-	_preview_button = _tool_panel.CreateCheckButton("显示投影预览", "", preview_enabled)
+	_preview_button = _create_localized_check_button(_message("preview.show"), preview_enabled)
 	_preview_button.connect("toggled", self, "_on_preview_toggled")
-	_follow_button = _tool_panel.CreateCheckButton("跟随已生成对象", "", follow_enabled)
+	_follow_button = _create_localized_check_button(_message("follow.enable"), follow_enabled)
 	_follow_button.connect("toggled", self, "_on_follow_toggled")
 	_reparent_ui_control(_preview_button, _advanced_container)
 	_reparent_ui_control(_follow_button, _advanced_container)
-	var clear_selection_button = _create_panel_button("清除选择记录", true)
+	var clear_selection_button = _create_panel_button(_message("action.clear_selection"), true)
 	clear_selection_button.connect("pressed", self, "clear_selection_record")
-	var exclude_button = _create_panel_button("排除选中目标", true)
+	var exclude_button = _create_panel_button(_message("action.exclude"), true)
 	exclude_button.connect("pressed", self, "exclude_selected")
-	var restore_button = _create_panel_button("恢复选中目标", true)
+	var restore_button = _create_panel_button(_message("action.restore"), true)
 	restore_button.connect("pressed", self, "restore_selected")
 	_reparent_ui_control(clear_selection_button, _advanced_container)
 	_reparent_ui_control(exclude_button, _advanced_container)
 	_reparent_ui_control(restore_button, _advanced_container)
 	_advanced_container.add_child(HSeparator.new())
-	var clean_button = _create_panel_button("清理本层投影", true)
+	var clean_button = _create_panel_button(_message("action.clear_floor"), true)
 	clean_button.connect("pressed", self, "clear_shadows")
 	_reparent_ui_control(clean_button, _advanced_container)
 	_tool_panel.EndSection()
@@ -354,7 +453,7 @@ func _create_tool_panel():
 	_sync_controls()
 
 
-func _create_ui_card(title : String) -> VBoxContainer:
+func _create_ui_card(title) -> VBoxContainer:
 	var panel = PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style = StyleBoxFlat.new()
@@ -380,7 +479,7 @@ func _create_ui_card(title : String) -> VBoxContainer:
 	return content
 
 
-func _create_ui_slider_row(parent, label_text : String) -> HBoxContainer:
+func _create_ui_slider_row(parent, label_text) -> HBoxContainer:
 	var row = HBoxContainer.new()
 	row.add_constant_override("separation", 4)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -401,11 +500,12 @@ func _reparent_ui_slider(slider, parent):
 	return display_root
 
 
-func _create_panel_button(label : String, secondary : bool = false):
+func _create_panel_button(label, secondary : bool = false):
 	# Panel actions use text-only buttons. Keep the Dungeondraft tool icon on the
 	# toolbar registration, where it helps identification instead of consuming
 	# the height of every action in the narrow side panel.
-	var control = _tool_panel.CreateButton(label, "")
+	var control = _tool_panel.CreateButton(_display_message(label), "")
+	_bind_ui_message(control, label)
 	_compact_panel_button_tree(control, secondary)
 	return control
 
@@ -435,7 +535,8 @@ func _ui_has_property(object, property_name : String) -> bool:
 	return false
 
 
-func _set_panel_button_text(control, text : String) -> bool:
+func _set_panel_button_text(control, message) -> bool:
+	var text = _display_message(message)
 	if not is_instance_valid(control):
 		return false
 	if _ui_has_property(control, "text"):
@@ -447,9 +548,10 @@ func _set_panel_button_text(control, text : String) -> bool:
 	return false
 
 
-func _new_ui_label(label_text : String, parent):
+func _new_ui_label(label_text, parent):
 	var label = Label.new()
-	label.text = label_text
+	label.text = _display_message(label_text)
+	_bind_ui_message(label, label_text)
 	label.autowrap = true
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(label)
@@ -484,7 +586,7 @@ func _update_responsive_action_layout(force : bool = false):
 	if not force and abs(width - _last_action_layout_width) < 12.0:
 		return
 	_last_action_layout_width = width
-	var use_horizontal = width >= 220.0
+	var use_horizontal = width >= (350.0 if language == "en" else 220.0)
 	if use_horizontal == (not _selection_action_row_vertical):
 		return
 	var old_row = _selection_action_row
@@ -602,17 +704,17 @@ func _apply_parameters_to_globals(options : Dictionary):
 	if options.has("color"):
 		shadow_color = _parse_color(str(options.color), shadow_color)
 	if _color_label != null:
-		_color_label.text = "阴影颜色：#" + shadow_color.to_html(false)
+		_color_label.text = _display_message(_message("label.shadow_color", [shadow_color.to_html(false)]))
 
 
 func set_adjustment_mode(mode : String) -> Dictionary:
 	if not mode in ["global", "individual"]:
-		return _operation_error("未知的参数调整模式。")
+		return _operation_error(_message("error.adjustment_mode"))
 	if mode == "individual" and _selected_source_ids().empty():
 		adjustment_mode = "individual"
 		_selection_parameter_key = ""
 		_sync_controls()
-		return _operation_notice("单独调整需要先记录至少一个本层对象或路径。", "selection_missing")
+		return _operation_notice(_message("notice.individual_missing"), "selection_missing")
 	adjustment_mode = mode
 	_selection_parameter_key = ""
 	_sync_controls()
@@ -620,7 +722,7 @@ func set_adjustment_mode(mode : String) -> Dictionary:
 	_settings_save_delay = 0.45
 	_last_error = ""
 	_last_notice = ""
-	_last_operation = "已切换到%s调整。" % ("全局" if mode == "global" else "单独")
+	_last_operation = _message("status.adjustment_mode", [(_message("mode.global_short") if mode == "global" else _message("mode.individual_short"))])
 	return {"ok": true, "mode": adjustment_mode}
 
 
@@ -637,17 +739,17 @@ func apply_global_settings(options : Dictionary = {}) -> Dictionary:
 		_refresh_enabled_appearance_without_overrides()
 	if _has_render_parameters(normalized):
 		refresh = _refresh_enabled_without_overrides()
-	_last_operation = "全局默认已更新；已排队刷新 %d 个无独立参数的对象/路径" % int(refresh.queued) if int(refresh.queued) > 0 else "全局默认已更新"
+	_last_operation = _message("status.global_queued", [int(refresh.queued)]) if int(refresh.queued) > 0 else _message("status.global_updated")
 	return {"ok": true, "queued": int(refresh.queued), "refreshed_candidate_count": int(refresh.candidates), "skipped_overrides": int(refresh.overrides)}
 
 
 func apply_to_selected_settings(options : Dictionary, defer_render : bool = false) -> Dictionary:
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
+		return _operation_error(_message("error.no_floor"))
 	var sources = _selected_sources(level)
 	if sources.empty():
-		return _operation_notice("单独调整需要先记录至少一个本层对象或路径；全局默认未更改。", "selection_missing")
+		return _operation_notice(_message("notice.individual_unchanged"), "selection_missing")
 	var normalized = _normalize_parameter_settings(options)
 	if normalized.empty():
 		return {"ok": true, "modified": 0, "queued": 0}
@@ -671,10 +773,10 @@ func apply_to_selected_settings(options : Dictionary, defer_render : bool = fals
 			_schedule_selected_parameter_refresh(sources)
 		else:
 			_flush_parameter_refresh()
-			queued = int(_enqueue_sources(sources, level, "单独调整刷新").get("queued", 0))
+			queued = int(_enqueue_sources(sources, level, _message("job.individual")).get("queued", 0))
 	_selection_parameter_key = ""
 	_sync_controls()
-	_last_operation = "已为 %d 个选中对象/路径设置独立参数；正在刷新" % modified if _has_render_parameters(normalized) else "已为 %d 个选中对象/路径更新外观" % modified
+	_last_operation = _message("status.individual_refresh", [modified]) if _has_render_parameters(normalized) else _message("status.individual_appearance", [modified])
 	return {"ok": true, "modified": modified, "queued": int(queued), "map_data_saved": saved}
 
 
@@ -691,7 +793,7 @@ func _schedule_global_parameter_refresh():
 	_parameter_refresh_global = true
 	_parameter_refresh_delay = PARAMETER_REFRESH_DEBOUNCE_SECONDS
 	_parameter_refresh_event_count += 1
-	_last_operation = "参数已更新；松开滑块后刷新投影"
+	_last_operation = _message("status.parameters_wait")
 
 
 func _schedule_selected_parameter_refresh(sources : Array):
@@ -702,7 +804,7 @@ func _schedule_selected_parameter_refresh(sources : Array):
 		var node_id = _stable_node_id(source)
 		if node_id >= 0:
 			_parameter_refresh_node_ids[str(node_id)] = true
-	_last_operation = "参数已更新；松开滑块后刷新所选对象"
+	_last_operation = _message("status.selected_wait")
 
 
 func _process_parameter_refresh(delta : float) -> bool:
@@ -744,16 +846,16 @@ func _flush_parameter_refresh() -> Dictionary:
 				var source = Global.World.GetNodeByID(int(node_key))
 				if _is_source_node(source) and _source_is_on_level(source, level) and not _excluded_node_ids.has(str(node_key)):
 					refresh.candidates += 1
-					if _queue_source(source, level, int(node_key), "参数调整刷新"):
+					if _queue_source(source, level, int(node_key), _message("job.parameters")):
 						refresh.queued += 1
 	if int(refresh.queued) > 0:
 		_last_generated = 0
-		_queue_completion_label = "参数调整刷新"
-		_last_operation = "参数已合并；正在刷新 %d 个对象/路径" % int(refresh.queued)
+		_queue_completion_label = _message("job.parameters")
+		_last_operation = _message("status.parameters_refresh", [int(refresh.queued)])
 	elif not _generation_queue.empty() or _generation_in_progress:
-		_last_operation = "参数已合并；目标已在生成队列中"
+		_last_operation = _message("status.parameters_queued")
 	else:
-		_last_operation = "参数已合并；没有需要刷新的已生成对象"
+		_last_operation = _message("status.parameters_none")
 	return refresh
 
 
@@ -796,10 +898,10 @@ func _apply_appearance_to_sources(sources : Array):
 func use_global_settings_for_selected() -> Dictionary:
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
+		return _operation_error(_message("error.no_floor"))
 	var sources = _selected_sources(level)
 	if sources.empty():
-		return _operation_notice("请先记录要恢复为全局参数的对象或路径。", "selection_missing")
+		return _operation_notice(_message("notice.use_global_missing"), "selection_missing")
 	var removed = 0
 	for source in sources:
 		var node_id = _stable_node_id(source)
@@ -810,10 +912,10 @@ func use_global_settings_for_selected() -> Dictionary:
 			_overrides.erase(key)
 			removed += 1
 	var saved = _save_map_recipe()
-	var queued = _enqueue_sources(sources, level, "使用全局参数").get("queued", 0)
+	var queued = _enqueue_sources(sources, level, _message("job.use_global")).get("queued", 0)
 	_selection_parameter_key = ""
 	_sync_controls()
-	_last_operation = "已移除 %d 个独立参数；正在按全局参数刷新" % removed
+	_last_operation = _message("status.use_global", [removed])
 	return {"ok": true, "restored": removed, "queued": int(queued), "map_data_saved": saved}
 
 
@@ -835,11 +937,11 @@ func _refresh_enabled_without_overrides() -> Dictionary:
 		if level == null:
 			continue
 		candidates += 1
-		if _queue_source(source, level, int(node_id), "全局参数刷新"):
+		if _queue_source(source, level, int(node_id), _message("job.global")):
 			queued += 1
 	if queued > 0:
 		_last_generated = 0
-		_queue_completion_label = "全局参数刷新"
+		_queue_completion_label = _message("job.global")
 	return {"queued": queued, "candidates": candidates, "overrides": override_count}
 
 
@@ -869,16 +971,16 @@ func _update_independent_controls():
 	if _scope_label == null:
 		return
 	if adjustment_mode != "individual":
-		_scope_label.text = "作用范围：全局默认"
+		_scope_label.text = _display_message(_message("scope.global"))
 		return
 	var selection_key = PoolStringArray(_selected_source_ids()).join(",")
 	if selection_key != _selection_parameter_key:
 		_selection_parameter_key = selection_key
 		_sync_controls()
 	if selection_key == "":
-		_scope_label.text = "作用范围：单独调整 · 尚无目标；全局默认不变"
+		_scope_label.text = _display_message(_message("scope.individual_empty"))
 	else:
-		_scope_label.text = "作用范围：单独调整 · 修改将应用到 %d 个目标" % _selected_source_ids().size()
+		_scope_label.text = _display_message(_message("scope.individual", [_selected_source_ids().size()]))
 
 
 func _update_multiselect_label():
@@ -889,7 +991,7 @@ func _update_multiselect_label():
 		return
 	var varied = []
 	var keys = ["angle", "distance", "blur_radius", "opacity", "mode", "color"]
-	var labels = {"angle": "角度", "distance": "距离", "blur_radius": "模糊", "opacity": "不透明度", "mode": "模式", "color": "颜色"}
+	var labels = {"angle": _message("parameter.angle"), "distance": _message("parameter.distance"), "blur_radius": _message("parameter.softness"), "opacity": _message("parameter.opacity"), "mode": _message("parameter.mode"), "color": _message("parameter.color")}
 	var first = get_effective_settings(int(selected_ids[0]))
 	for key in keys:
 		var first_value = first.get(key, null)
@@ -897,11 +999,11 @@ func _update_multiselect_label():
 			var current = get_effective_settings(int(selected_ids[index])).get(key, null)
 			var different = abs(float(first_value) - float(current)) > 0.0001 if typeof(first_value) in [TYPE_INT, TYPE_REAL] and typeof(current) in [TYPE_INT, TYPE_REAL] else first_value != current
 			if different:
-				varied.append(labels[key])
+				varied.append(_display_message(labels[key]))
 				break
-	var message = "作用范围：单独调整 · %d 个目标；显示第一个值" % selected_ids.size()
+	var message = _display_message(_message("scope.first_value", [selected_ids.size()]))
 	if not varied.empty():
-		message += " · 混合值：" + PoolStringArray(varied).join("、")
+		message += _display_message(_message("scope.mixed")) + PoolStringArray(varied).join(_display_message(_message("list.separator")))
 	_scope_label.text = message
 
 
@@ -934,6 +1036,7 @@ func _mark_settings_changed():
 
 
 func _load_global_settings():
+	language = "zh_CN" if TranslationServer.get_locale().to_lower().begins_with("zh") else "en"
 	angle_degrees = 45.0
 	distance = 32.0
 	blur_radius = 8.0
@@ -953,6 +1056,9 @@ func _load_global_settings():
 	if parsed.error != OK or typeof(parsed.result) != TYPE_DICTIONARY:
 		return
 	var data = parsed.result
+	var saved_language = str(data.get("language", language))
+	if saved_language in ["zh_CN", "en"]:
+		language = saved_language
 	angle_degrees = _number_setting(data, "angle", angle_degrees, 0.0, 359.0)
 	distance = _number_setting(data, "distance", distance, 0.0, 256.0)
 	blur_radius = _number_setting(data, "blur_radius", blur_radius, 0.0, 64.0)
@@ -990,6 +1096,7 @@ func _save_global_settings():
 	if not directory.dir_exists("user://contour_shadows"):
 		directory.make_dir_recursive("user://contour_shadows")
 	var data = _settings_dictionary()
+	data["language"] = language
 	data["adjustment_mode"] = adjustment_mode
 	data["eraser_radius"] = eraser_radius
 	data["eraser_hardness"] = eraser_hardness
@@ -999,7 +1106,7 @@ func _save_global_settings():
 		file.close()
 		_settings_dirty = false
 	else:
-		_last_error = "无法保存 user://contour_shadows/settings.json"
+		_last_error = _message("error.save_local")
 
 
 
@@ -1021,7 +1128,7 @@ func _load_map_recipe():
 	var recipe_version = int(saved.get("version", 1))
 	if recipe_version < 1 or recipe_version > RECIPE_VERSION:
 		_map_recipe_writable = false
-		_last_error = "地图中的轮廓投影设置版本 %d 暂不受支持；已保留原数据。" % recipe_version
+		_last_error = _message("error.recipe_version", [recipe_version])
 		return false
 	var enabled_ids = saved.get("enabled_node_ids", [])
 	var excluded_ids = saved.get("excluded_node_ids", [])
@@ -1074,10 +1181,10 @@ func _load_map_recipe():
 
 func _save_map_recipe() -> bool:
 	if not _map_recipe_writable:
-		_last_error = "地图中的轮廓投影设置版本暂不受支持；原数据已保留。"
+		_last_error = _message("error.recipe_readonly")
 		return false
 	if typeof(Global.ModMapData) != TYPE_DICTIONARY:
-		_last_error = "地图设置暂时无法保存。"
+		_last_error = _message("error.save_map")
 		return false
 	var recipe = _recipe_extra_fields.duplicate(true)
 	recipe["version"] = RECIPE_VERSION
@@ -1235,44 +1342,44 @@ func _restore_enabled_objects():
 		var level = _level_for_source(source)
 		if level == null:
 			continue
-		if _queue_source(source, level, node_id, "重开地图恢复"):
+		if _queue_source(source, level, node_id, _message("job.reopen")):
 			restored_sources.append(source)
 	if recipe_changed:
 		_save_map_recipe()
 	if not restored_sources.empty():
 		_last_generated = 0
 		_last_skipped = 0
-		_queue_completion_label = "重开地图恢复"
-		_last_operation = "重开地图：已排队恢复 %d 个轮廓投影" % restored_sources.size()
+		_queue_completion_label = _message("job.reopen")
+		_last_operation = _message("status.reopen", [restored_sources.size()])
 	else:
-		_last_operation = "地图设置已载入；尚未生成投影"
+		_last_operation = _message("status.map_loaded")
 
 
 func generate_current_level() -> Dictionary:
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
-	return _enqueue_sources(_level_sources(level), level, "当前层")
+		return _operation_error(_message("error.no_floor"))
+	return _enqueue_sources(_level_sources(level), level, _message("job.floor"))
 
 
 func generate_selected() -> Dictionary:
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
+		return _operation_error(_message("error.no_floor"))
 	var sources = _selected_sources(level)
 	if sources.empty():
-		return _operation_notice("请先用选择工具选中本层物件或路径，再生成投影。", "selection_missing")
-	return _enqueue_sources(sources, level, "选中对象")
+		return _operation_notice(_message("notice.generate_missing"), "selection_missing")
+	return _enqueue_sources(sources, level, _message("job.selected"))
 
 
 func begin_selection_mode() -> Dictionary:
 	if not is_instance_valid(Global.Editor):
-		return _operation_error("当前无法打开选择工具。")
+		return _operation_error(_message("error.select_unavailable"))
 	if not Global.Editor.has_method("OnSelectTool"):
-		return _operation_error("当前版本无法打开选择工具。")
+		return _operation_error(_message("error.select_version"))
 	_last_error = ""
-	_last_notice = "先在地图上选取本层物件，再回到轮廓投影。"
-	_last_operation = "已打开选择工具；选好对象后回到轮廓投影。"
+	_last_notice = _message("notice.select")
+	_last_operation = _message("status.select")
 	Global.Editor.call("OnSelectTool", "SelectTool")
 	return {"ok": true, "tool": "SelectTool"}
 
@@ -1294,21 +1401,21 @@ func clear_selection_record() -> Dictionary:
 	_sync_selection_highlights()
 	_last_selected_prop_count = 0
 	_last_selection_source = "none"
-	_last_notice = "已清除选择记录。"
+	_last_notice = _message("status.selection_cleared")
 	_last_error = ""
-	_last_operation = "已清除选择记录。"
+	_last_operation = _message("status.selection_cleared")
 	return {"ok": true, "cleared": true, "live_selection_cleared": live_selection_cleared}
 
 
 func exclude_selected() -> Dictionary:
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
+		return _operation_error(_message("error.no_floor"))
 	_finish_eraser_stroke(true)
 	var count = 0
 	var sources = _selected_sources(level)
 	if sources.empty():
-		return _operation_notice("请先用选择工具选中本层物件或路径，再执行此操作。", "selection_missing")
+		return _operation_notice(_message("notice.selection_missing"), "selection_missing")
 	for source in sources:
 		var node_id = _stable_node_id(source)
 		if node_id < 0:
@@ -1323,7 +1430,7 @@ func exclude_selected() -> Dictionary:
 		_cancel_queued_node(key)
 		count += 1
 	var map_data_saved = _save_map_recipe()
-	_last_operation = "已排除 %d 个选中对象" % count
+	_last_operation = _message("status.excluded", [count])
 	if map_data_saved:
 		_last_error = ""
 	return {"ok": true, "excluded": count, "map_data_saved": map_data_saved}
@@ -1332,10 +1439,10 @@ func exclude_selected() -> Dictionary:
 func restore_selected() -> Dictionary:
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
+		return _operation_error(_message("error.no_floor"))
 	var sources = _selected_sources(level)
 	if sources.empty():
-		return _operation_notice("请先用选择工具选中本层物件或路径，再执行此操作。", "selection_missing")
+		return _operation_notice(_message("notice.selection_missing"), "selection_missing")
 	var count = 0
 	for source in sources:
 		var node_id = _stable_node_id(source)
@@ -1346,17 +1453,17 @@ func restore_selected() -> Dictionary:
 			_excluded_node_ids.erase(key)
 			count += 1
 	var map_data_saved = _save_map_recipe()
-	var queued = _enqueue_sources(sources, level, "恢复选中对象")
-	_last_operation = "已恢复 %d 个对象；正在生成选中投影" % count
+	var queued = _enqueue_sources(sources, level, _message("job.restore"))
+	_last_operation = _message("status.restored", [count])
 	if not map_data_saved:
-		_last_error = "地图设置暂时无法保存。"
+		_last_error = _message("error.save_map")
 	return {"ok": true, "restored": count, "queued": queued.get("queued", 0), "map_data_saved": map_data_saved}
 
 
 func clear_shadows() -> Dictionary:
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
+		return _operation_error(_message("error.no_floor"))
 	_flush_parameter_refresh()
 	_finish_eraser_stroke(true)
 	var removed = 0
@@ -1373,7 +1480,7 @@ func clear_shadows() -> Dictionary:
 	_cancel_queued_level(int(level.ID))
 	var map_data_saved = _save_map_recipe()
 	_last_removed = removed
-	_last_operation = "已清理当前层 %d 个轮廓投影" % removed
+	_last_operation = _message("status.floor_cleared", [removed])
 	if map_data_saved:
 		_last_error = ""
 	return {"ok": true, "removed": removed, "level_id": int(level.ID), "map_data_saved": map_data_saved}
@@ -1404,7 +1511,7 @@ func configure(options : Dictionary) -> Dictionary:
 	return get_diagnostics()
 
 
-func _enqueue_sources(sources : Array, level, label : String) -> Dictionary:
+func _enqueue_sources(sources : Array, level, label) -> Dictionary:
 	var queued = 0
 	var skipped = 0
 	for source in sources:
@@ -1425,16 +1532,16 @@ func _enqueue_sources(sources : Array, level, label : String) -> Dictionary:
 	_last_generated = 0
 	_last_notice = ""
 	_queue_completion_label = label
-	_last_operation = "%s：已排队 %d 个对象/路径" % [label, queued] if queued > 0 else "%s：没有需要生成的对象/路径" % label
+	_last_operation = _message("status.queued", [label, queued]) if queued > 0 else _message("status.queue_empty", [label])
 	_last_error = ""
 	return {"ok": true, "queued": queued, "skipped": skipped, "level_id": int(level.ID)}
 
 
-func _enqueue_props(props : Array, level, label : String) -> Dictionary:
+func _enqueue_props(props : Array, level, label) -> Dictionary:
 	return _enqueue_sources(props, level, label)
 
 
-func _queue_source(source, level, node_id : int, label : String) -> bool:
+func _queue_source(source, level, node_id : int, label) -> bool:
 	var key = str(node_id)
 	if _pending_node_ids.has(key):
 		return false
@@ -1452,7 +1559,7 @@ func _queue_source(source, level, node_id : int, label : String) -> bool:
 	return true
 
 
-func _queue_prop(prop, level, node_id : int, label : String) -> bool:
+func _queue_prop(prop, level, node_id : int, label) -> bool:
 	return _queue_source(prop, level, node_id, label)
 
 
@@ -1485,7 +1592,7 @@ func _process_generation_queue():
 	if not _is_pathway_source(source) and (_renderer == null or not _renderer.has_method("render_async")):
 		var cpu_result = _generate_prop(source, int(item.node_id))
 		_pending_node_ids.erase(key)
-		_complete_generation_item(source, int(item.node_id), cpu_result, str(item.get("label", "生成")), str(item.get("source_signature", "")))
+		_complete_generation_item(source, int(item.node_id), cpu_result, item.get("label", _message("job.generate")), str(item.get("source_signature", "")))
 		_clear_active_generation_job(int(item.job_token))
 		return
 	var result_or_state = _generate_source_async(item, level, source)
@@ -1498,7 +1605,7 @@ func _process_generation_queue():
 func _await_generation_job(job_state : GDScriptFunctionState, item : Dictionary, level, source):
 	var result = yield(job_state, "completed")
 	if typeof(result) != TYPE_DICTIONARY:
-		result = {"ok": false, "error": "异步投影任务没有返回有效结果。"}
+		result = {"ok": false, "error": _message("error.async_result")}
 	_finish_generation_job(item, level, source, result)
 
 
@@ -1518,11 +1625,11 @@ func _generate_source_async(item : Dictionary, level, source):
 	if typeof(capture) != TYPE_DICTIONARY:
 		if is_instance_valid(source):
 			_remove_shadow(source)
-		return {"ok": false, "error": "源对象捕获没有返回有效结果。"}
+		return {"ok": false, "error": _message("error.capture_result")}
 	if not capture.get("ok", false):
 		if is_instance_valid(source):
 			_remove_shadow(source)
-		return {"ok": false, "error": str(capture.get("error", "无法捕获投影源图像。"))}
+		return {"ok": false, "error": capture.get("error", _message("error.capture"))}
 	if not _source_signature_matches_item(item, source):
 		return {"ok": false, "retry": true}
 	var prepared = _prepare_render_from_capture(source, node_id, capture)
@@ -1571,10 +1678,10 @@ func _finish_generation_job(item : Dictionary, level, source, result : Dictionar
 	if result.get("retry", false) and _is_source_node(source) and is_instance_valid(level) and _source_is_on_level(source, level) and not _excluded_node_ids.has(key):
 		_generation_batch_done += 1
 		_clear_active_generation_job(token)
-		if _queue_source(source, level, node_id, str(item.get("label", "生成"))):
-			_last_operation = "目标在生成期间发生变化，已重新排队刷新"
+		if _queue_source(source, level, node_id, item.get("label", _message("job.generate"))):
+			_last_operation = _message("status.source_changed")
 		return
-	_complete_generation_item(source, node_id, result, str(item.get("label", "生成")), str(item.get("source_signature", "")))
+	_complete_generation_item(source, node_id, result, item.get("label", _message("job.generate")), str(item.get("source_signature", "")))
 	_clear_active_generation_job(token)
 
 
@@ -1619,10 +1726,10 @@ func _generate_prop(prop, node_id : int) -> Dictionary:
 func _capture_prop_source(prop) -> Dictionary:
 	var sprite = _prop_sprite(prop)
 	if not is_instance_valid(sprite) or not (sprite is Sprite) or sprite.texture == null:
-		return {"ok": false, "error": "无法读取该物件的图像。"}
+		return {"ok": false, "error": _message("error.source_image")}
 	var extracted = _get_cached_sprite_image(sprite)
 	if typeof(extracted) != TYPE_DICTIONARY or not extracted.get("ok", false):
-		return {"ok": false, "error": str(extracted.get("error", "无法读取该物件的图像。"))}
+		return {"ok": false, "error": extracted.get("error", _message("error.source_image"))}
 	var pixel_to_local = sprite.transform * Transform2D(Vector2(1.0, 0.0), Vector2(0.0, 1.0), extracted.rect.position)
 	return {
 		"ok": true,
@@ -1651,11 +1758,11 @@ func _generate_source_from_capture(source, node_id : int, capture : Dictionary) 
 
 func _prepare_render_from_capture(source, node_id : int, capture : Dictionary) -> Dictionary:
 	if _renderer == null or _geometry == null or _shadow_mask == null:
-		return {"ok": false, "error": "投影功能暂不可用，请重新打开地图或检查插件安装。"}
+		return {"ok": false, "error": _message("error.unavailable")}
 	var source_image = capture.get("image", null)
 	var pixel_to_local = capture.get("pixel_to_local", Transform2D())
 	if not (source_image is Image) or source_image.is_empty():
-		return {"ok": false, "error": "没有有效的投影源图像。"}
+		return {"ok": false, "error": _message("error.no_source_image")}
 	var settings = get_effective_settings(node_id)
 	var image_global_transform = source.global_transform * pixel_to_local
 	var world_displacement = _geometry.angle_vector(float(settings.angle), float(settings.distance))
@@ -1674,16 +1781,16 @@ func _prepare_render_from_capture(source, node_id : int, capture : Dictionary) -
 func _install_render_result(source, node_id : int, capture : Dictionary, settings : Dictionary, rendered) -> Dictionary:
 	if typeof(rendered) != TYPE_DICTIONARY:
 		_remove_shadow(source)
-		return {"ok": false, "error": "渲染器没有返回有效结果。"}
+		return {"ok": false, "error": _message("error.render_result")}
 	if not rendered.get("ok", false):
 		_remove_shadow(source)
-		return {"ok": false, "error": str(rendered.get("error", "轮廓渲染失败。"))}
+		return {"ok": false, "error": rendered.get("error", _message("error.render"))}
 	if not rendered.has("image") or not (rendered.image is Image):
 		_remove_shadow(source)
-		return {"ok": false, "error": "渲染结果中没有有效图像。"}
+		return {"ok": false, "error": _message("error.render_image")}
 	if rendered.image.is_empty():
 		_remove_shadow(source)
-		return {"ok": false, "error": "渲染结果图像为空。"}
+		return {"ok": false, "error": _message("error.render_empty")}
 	var node_key = str(node_id)
 	if _eraser_stroke_by_node_id.has(node_key):
 		_finish_eraser_stroke(true)
@@ -1712,7 +1819,7 @@ func _install_render_result(source, node_id : int, capture : Dictionary, setting
 	return {"ok": true, "node_id": node_id}
 
 
-func _complete_generation_item(source, node_id : int, result : Dictionary, label : String, source_signature : String = ""):
+func _complete_generation_item(source, node_id : int, result : Dictionary, label, source_signature : String = ""):
 	var key = str(node_id)
 	_generation_batch_done += 1
 	if result.get("ok", false):
@@ -1721,12 +1828,12 @@ func _complete_generation_item(source, node_id : int, result : Dictionary, label
 		_last_generated += 1
 		_save_map_recipe()
 	else:
-		_last_error = str(result.get("error", "生成失败。"))
-		_last_operation = "生成失败：" + _last_error
+		_last_error = result.get("error", _message("error.generation"))
+		_last_operation = _message("status.generation_failed", [_last_error])
 	if _generation_queue.empty():
-		var should_complete = _queue_completion_label == label or _last_operation.find("已排队") >= 0 or _last_operation.find("正在刷新") >= 0
+		var should_complete = not _has_message(_last_error) and _generation_batch_done >= _generation_batch_total
 		if should_complete:
-			_last_operation = "已完成 %d/%d 个投影" % [_generation_batch_done, _generation_batch_total]
+			_last_operation = _message("status.completed", [_generation_batch_done, _generation_batch_total])
 			_queue_completion_label = ""
 
 
@@ -1746,7 +1853,7 @@ func _get_cached_sprite_image(sprite) -> Dictionary:
 		return extracted
 	var image = extracted.get("image", null)
 	if not (image is Image) or image.is_empty():
-		return {"ok": false, "error": "无法读取该物件的图像。"}
+		return {"ok": false, "error": _message("error.source_image")}
 	var image_bytes = int(image.get_width()) * int(image.get_height()) * 4
 	if image_bytes <= 0 or image_bytes > MAX_EXTRACTION_CACHE_BYTES:
 		return extracted
@@ -2111,9 +2218,9 @@ func _update_selection_label():
 		_set_selected_counts(snapshot_sources)
 		count = snapshot_sources.size()
 	if _selection_record_cleared:
-		_selection_label.text = "目标：0 个 · 选择记录已清除"
+		_selection_label.text = _display_message(_message("selection.cleared"))
 	else:
-		_selection_label.text = "目标：%d 个 · %d 物件 / %d 路径" % [count, _last_selected_prop_count, _last_selected_path_count]
+		_selection_label.text = _display_message(_message("selection.count", [count, _last_selected_prop_count, _last_selected_path_count]))
 
 
 func _sync_selection_highlights():
@@ -2238,10 +2345,10 @@ func _scan_generated_for_changes():
 			continue
 		var signature = _source_signature(source)
 		if signature != str(_generated_fingerprints.get(key, "")) and not _pending_node_ids.has(key):
-			if _queue_source(source, level, int(key), "跟随更新"):
+			if _queue_source(source, level, int(key), _message("job.follow")):
 				_last_generated = 0
-				_queue_completion_label = "跟随更新"
-				_last_operation = "跟随更新：已排队 1 个对象"
+				_queue_completion_label = _message("job.follow")
+				_last_operation = _message("status.follow")
 				break
 
 
@@ -2311,14 +2418,14 @@ func _on_eraser_toggled(value):
 	if _syncing_controls:
 		return
 	if not bool(value):
-		_disable_eraser("阴影橡皮擦已关闭。")
+		_disable_eraser(_message("status.eraser_disabled"))
 		return
 	# Snapshot the real SelectTool selection before handing input to this mod tool.
 	_capture_selection_snapshot()
 	var level = _current_level()
 	if level == null or not _selection_snapshot_matches(level):
 		_sync_controls()
-		_operation_notice("阴影橡皮擦需要先记录至少一个本层对象或路径。", "selection_missing")
+		_operation_notice(_message("notice.eraser_missing"), "selection_missing")
 		return
 	var selected_sources = _selected_sources(level)
 	var selected_ids = []
@@ -2329,7 +2436,7 @@ func _on_eraser_toggled(value):
 	selected_ids.sort()
 	if selected_ids.empty():
 		_sync_controls()
-		_operation_notice("阴影橡皮擦需要先记录至少一个本层对象或路径。", "selection_missing")
+		_operation_notice(_message("notice.eraser_missing"), "selection_missing")
 		return
 	var missing_sources = []
 	for source in selected_sources:
@@ -2342,13 +2449,13 @@ func _on_eraser_toggled(value):
 			if _pending_node_ids.has(str(_stable_node_id(source))):
 				waiting_for_generation = true
 				break
-		var message = "所选对象的投影仍在生成；请等待队列完成后再启用橡皮擦。" if waiting_for_generation else "所选对象缺少可擦除的投影缓存；请先生成/刷新选中对象，再启用橡皮擦。"
+		var message = _message("notice.eraser_wait") if waiting_for_generation else _message("notice.eraser_cache")
 		_sync_controls()
 		_operation_notice(message, "eraser_shadow_not_ready")
 		return
 	if not is_instance_valid(Global.Editor) or not Global.Editor.has_method("OnSelectTool"):
 		_sync_controls()
-		_operation_error("当前版本无法接管画布输入，橡皮擦未启用。")
+		_operation_error(_message("error.eraser_input"))
 		return
 	var expected_world_id = int(Global.World.get_instance_id()) if is_instance_valid(Global.World) else -1
 	var expected_level_id = int(level.ID)
@@ -2367,12 +2474,12 @@ func _on_eraser_toggled(value):
 	if _active_tool_name() != TOOL_ID:
 		_clear_eraser_scope()
 		_sync_controls()
-		_operation_error("无法切换到轮廓投影工具，橡皮擦未启用。")
+		_operation_error(_message("error.eraser_tool"))
 		return
 	if not _eraser_scope_matches(expected_world_id, expected_level_id, expected_map_file, expected_selection_key):
 		_clear_eraser_scope()
 		_sync_controls()
-		_operation_notice("接管画布后地图、楼层或选择发生变化；橡皮擦未启用，请重新确认目标。", "eraser_scope_changed")
+		_operation_notice(_message("notice.eraser_scope"), "eraser_scope_changed")
 		return
 	# A host lifecycle callback can clear these during OnSelectTool. Re-apply the
 	# captured scope after verifying that the same world/level/selection survived.
@@ -2385,7 +2492,7 @@ func _on_eraser_toggled(value):
 	_set_eraser_cursor()
 	_last_error = ""
 	_last_notice = ""
-	_last_operation = "橡皮擦已启用 · 仅擦除 %d 个已记录对象/路径" % selected_ids.size()
+	_last_operation = _message("status.eraser_enabled", [selected_ids.size()])
 	_sync_controls()
 
 
@@ -2457,7 +2564,7 @@ func on_tool_enable(tool_id):
 
 func on_tool_disable(tool_id):
 	if str(tool_id) == TOOL_ID:
-		_disable_eraser("工具切换，橡皮擦关闭")
+		_disable_eraser(_message("status.eraser_tool_changed"))
 
 
 func on_content_input(event):
@@ -2466,7 +2573,7 @@ func on_content_input(event):
 	if _poll_eraser_focus(_read_window_focus()):
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.scancode == KEY_ESCAPE:
-		_disable_eraser("已结束阴影橡皮擦。")
+		_disable_eraser(_message("status.eraser_ended"))
 		return
 	if event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
 		if event.pressed:
@@ -2484,7 +2591,7 @@ func on_content_input(event):
 		if not _world_ui_inside_bounds():
 			_finish_eraser_stroke(true)
 			_eraser_drawing = false
-			_last_operation = "已离开画布，笔画结束"
+			_last_operation = _message("status.stroke_left")
 			return
 		var current_position = _get_map_mouse_position()
 		_apply_eraser_segment(_eraser_last_world_position, current_position)
@@ -2495,29 +2602,29 @@ func _update_eraser_lifecycle():
 	if not eraser_enabled:
 		return
 	if _active_tool_name() != TOOL_ID:
-		_disable_eraser("工具切换，橡皮擦关闭")
+		_disable_eraser(_message("status.eraser_tool_changed"))
 		return
 	if _poll_eraser_focus(_read_window_focus()):
 		return
 	if not is_instance_valid(Global.World):
-		_disable_eraser("地图切换，橡皮擦关闭", false)
+		_disable_eraser(_message("status.eraser_map_changed"), false)
 		return
 	if int(Global.World.get_instance_id()) != _eraser_world_id or _current_map_file() != _eraser_map_file:
-		_disable_eraser("地图切换，橡皮擦关闭", false)
+		_disable_eraser(_message("status.eraser_map_changed"), false)
 		return
 	var level = _current_level()
 	if not is_instance_valid(level):
-		_disable_eraser("楼层切换，橡皮擦关闭", false)
+		_disable_eraser(_message("status.eraser_floor_changed"), false)
 		return
 	if int(level.ID) != _eraser_level_id:
-		_disable_eraser("楼层切换，橡皮擦关闭")
+		_disable_eraser(_message("status.eraser_floor_changed"))
 		return
 	var selection_key = PoolStringArray(_selected_source_ids()).join(",")
 	if selection_key != _eraser_selection_key:
 		_finish_eraser_stroke(true)
 		_eraser_selection_key = selection_key
 		if selection_key == "":
-			_disable_eraser("选择已清空，橡皮擦关闭")
+			_disable_eraser(_message("status.eraser_selection_cleared"))
 
 
 func _read_window_focus() -> bool:
@@ -2542,10 +2649,10 @@ func _handle_eraser_focus_lost():
 		return
 	_finish_eraser_stroke(true)
 	_eraser_drawing = false
-	_last_operation = "窗口失焦，笔画结束"
+	_last_operation = _message("status.stroke_focus")
 
 
-func _disable_eraser(message : String = "", persist : bool = true):
+func _disable_eraser(message = "", persist : bool = true):
 	_finish_eraser_stroke(true, persist)
 	eraser_enabled = false
 	_eraser_window_was_focused = _read_window_focus()
@@ -2555,7 +2662,7 @@ func _disable_eraser(message : String = "", persist : bool = true):
 	_eraser_map_file = ""
 	_restore_world_ui_cursor()
 	_sync_controls()
-	if message != "":
+	if _has_message(message):
 		_last_operation = message
 
 
@@ -2919,8 +3026,8 @@ func _process_eraser_jobs():
 			template["points"] = []
 			state = _shadow_mask.call("begin_incremental", baseline, template, cache.pixel_to_local)
 			if typeof(state) != TYPE_DICTIONARY or not state.get("ok", false):
-				_last_error = str(state.get("error", "无法开始增量擦除。")) if typeof(state) == TYPE_DICTIONARY else "增量擦除初始化失败。"
-				_last_operation = "擦除更新失败"
+				_last_error = state.get("error", _message("error.incremental_start")) if typeof(state) == TYPE_DICTIONARY else _message("error.incremental_init")
+				_last_operation = _message("status.eraser_failed")
 				if _eraser_stroke_by_node_id.has(node_key):
 					_finish_eraser_stroke(true)
 				_cancel_eraser_jobs_for_node(node_key)
@@ -2951,8 +3058,8 @@ func _process_eraser_jobs():
 		var remaining_usec = max(1, ERASER_FRAME_TIME_BUDGET_USEC - int(OS.get_ticks_usec() - frame_started))
 		var advanced = _shadow_mask.call("advance_incremental", state, remaining_pixels, remaining_usec)
 		if typeof(advanced) != TYPE_DICTIONARY or not advanced.get("ok", false):
-			_last_error = str(advanced.get("error", "擦除计算失败。")) if typeof(advanced) == TYPE_DICTIONARY else "擦除计算失败。"
-			_last_operation = "擦除更新失败"
+			_last_error = advanced.get("error", _message("error.erase_compute")) if typeof(advanced) == TYPE_DICTIONARY else _message("error.erase_compute")
+			_last_operation = _message("status.eraser_failed")
 			if _eraser_stroke_by_node_id.has(node_key):
 				_finish_eraser_stroke(true)
 			_cancel_eraser_jobs_for_node(node_key)
@@ -2978,7 +3085,7 @@ func _process_eraser_jobs():
 			queue[0] = job
 			_eraser_pending_jobs[node_key] = queue
 			if closed or pending or has_unqueued_points:
-				_last_operation = "正在更新擦除…"
+				_last_operation = _message("status.erasing")
 	if not _eraser_job_order.empty():
 		_eraser_job_cursor = posmod(start_index + max(1, visited), _eraser_job_order.size())
 	else:
@@ -2992,9 +3099,9 @@ func _process_eraser_jobs():
 	_eraser_total_upload_usec += _eraser_last_frame_upload_usec
 	_eraser_last_frame_usec = int(OS.get_ticks_usec() - frame_started)
 	if not _eraser_pending_jobs.empty() and not _eraser_drawing:
-		_last_operation = "正在更新擦除…"
-	elif had_jobs and _eraser_pending_jobs.empty() and _last_error == "":
-		_last_operation = "擦除更新完成"
+		_last_operation = _message("status.erasing")
+	elif had_jobs and _eraser_pending_jobs.empty() and not _has_message(_last_error):
+		_last_operation = _message("status.erased")
 
 
 func _upload_eraser_image(node_key : String, source, image : Image) -> bool:
@@ -3062,7 +3169,7 @@ func _start_gpu_eraser_preview(node_key : String, job : Dictionary, source, cach
 	elif typeof(request) == TYPE_DICTIONARY:
 		_complete_gpu_eraser_preview(context, request)
 	else:
-		_complete_gpu_eraser_preview(context, {"ok": false, "error": "GPU 擦除没有返回有效结果。"})
+		_complete_gpu_eraser_preview(context, {"ok": false, "error": _message("error.gpu_erase")})
 
 
 func _await_gpu_eraser_preview(request : GDScriptFunctionState, context : Dictionary):
@@ -3122,7 +3229,7 @@ func _complete_gpu_eraser_preview(context : Dictionary, result):
 			if current_stroke_index >= 0 and current_stroke_index < current_strokes.size():
 				latest_points_count = current_strokes[current_stroke_index].get("points", []).size()
 			if not bool(job.get("closed", false)) or snapshot_point_count < latest_points_count:
-				_last_operation = "正在更新擦除…"
+				_last_operation = _message("status.erasing")
 			return
 	# A failed GPU preview is replayed once from the stroke-start image by the
 	# bounded CPU worker. The renderer always returns a baseline-relative image,
@@ -3138,8 +3245,8 @@ func _complete_gpu_eraser_preview(context : Dictionary, result):
 	var baseline = job.get("gpu_baseline", null)
 	var state = _shadow_mask.call("begin_incremental", baseline, template, cache.pixel_to_local)
 	if typeof(state) != TYPE_DICTIONARY or not bool(state.get("ok", false)):
-		_last_error = str(state.get("error", "无法开始擦除兼容回退。")) if typeof(state) == TYPE_DICTIONARY else "无法开始擦除兼容回退。"
-		_last_operation = "擦除更新失败"
+		_last_error = state.get("error", _message("error.erase_fallback")) if typeof(state) == TYPE_DICTIONARY else _message("error.erase_fallback")
+		_last_operation = _message("status.eraser_failed")
 		if _eraser_stroke_by_node_id.has(node_key):
 			_finish_eraser_stroke(true)
 		_cancel_eraser_jobs_for_node(node_key)
@@ -3155,8 +3262,8 @@ func _complete_gpu_eraser_preview(context : Dictionary, result):
 	_eraser_pending_jobs[node_key] = queue
 	_eraser_last_backend = "cpu_fallback"
 	_last_error = ""
-	_last_notice = "已切换到渐进式擦除兼容模式。"
-	_last_operation = "正在更新擦除…"
+	_last_notice = _message("notice.erase_fallback")
+	_last_operation = _message("status.erasing")
 
 
 func _queue_all_incremental_eraser_points(state : Dictionary, points : Array):
@@ -3327,7 +3434,7 @@ func add_erase_stroke(node_id : int, local_points : Array, radius_world : float,
 	var key = str(int(node_id))
 	var source = Global.World.GetNodeByID(int(node_id)) if is_instance_valid(Global.World) else null
 	if not _is_source_node(source) or _find_shadow(source) == null:
-		return _operation_notice("该对象/路径当前没有可擦除的轮廓投影。", "shadow_missing")
+		return _operation_notice(_message("notice.shadow_missing"), "shadow_missing")
 	# Explicit API strokes synchronize earlier queued pointer work before testing
 	# against the visible alpha, then use the existing deterministic full replay.
 	if _eraser_stroke_by_node_id.has(key):
@@ -3339,10 +3446,10 @@ func add_erase_stroke(node_id : int, local_points : Array, radius_world : float,
 		if point != null:
 			parsed_points.append(point)
 	if parsed_points.empty() or radius_world <= 0.0:
-		return _operation_error("擦除笔画需要有效的局部坐标点和正半径。")
+		return _operation_error(_message("error.erase_stroke"))
 	var basis = _radius_basis_from_value(world_radius_basis)
 	if abs(basis.x.x * basis.y.y - basis.x.y * basis.y.x) < 0.000001:
-		return _operation_error("擦除笔刷变换不可逆。")
+		return _operation_error(_message("error.erase_transform"))
 	if not _erase_stroke_intersects_shadow(key, parsed_points, radius_world, basis):
 		return {"ok": true, "recorded": false, "reason": "no_shadow_intersection"}
 	var stroke = {
@@ -3408,7 +3515,7 @@ func _finish_eraser_stroke(record_undo : bool, persist : bool = true):
 	_eraser_gesture_node_ids.clear()
 	_eraser_stroke_by_node_id.clear()
 	if not _eraser_pending_jobs.empty():
-		_last_operation = "正在更新擦除…"
+		_last_operation = _message("status.erasing")
 
 
 func _mark_eraser_job_closed(node_key : String, stroke_index : int):
@@ -3442,7 +3549,7 @@ func _cancel_all_eraser_jobs():
 func undo_last_erase() -> Dictionary:
 	_finish_eraser_stroke(true)
 	if _erase_undo_stack.empty():
-		return _operation_notice("当前会话没有可撤销的擦除笔画。", "undo_empty")
+		return _operation_notice(_message("notice.undo_empty"), "undo_empty")
 	var gesture = _erase_undo_stack.pop_back()
 	var restored = 0
 	for entry in gesture:
@@ -3461,7 +3568,7 @@ func undo_last_erase() -> Dictionary:
 			_generated_fingerprints[key] = _source_signature(source)
 		restored += 1
 	_save_map_recipe()
-	_last_operation = "已撤销上一笔擦除，恢复 %d 个对象/路径" % restored
+	_last_operation = _message("status.undo", [restored])
 	return {"ok": true, "restored": restored}
 
 
@@ -3469,10 +3576,10 @@ func restore_selected_erasures() -> Dictionary:
 	_finish_eraser_stroke(true)
 	var level = _current_level()
 	if level == null:
-		return _operation_error("没有打开的地图楼层。")
+		return _operation_error(_message("error.no_floor"))
 	var sources = _selected_sources(level)
 	if sources.empty():
-		return _operation_notice("请先记录要恢复阴影擦除的对象或路径。", "selection_missing")
+		return _operation_notice(_message("notice.restore_erase_missing"), "selection_missing")
 	var restored = 0
 	for source in sources:
 		var key = str(_stable_node_id(source))
@@ -3484,7 +3591,7 @@ func restore_selected_erasures() -> Dictionary:
 		_generated_fingerprints[key] = _source_signature(source)
 		restored += 1
 	var saved = _save_map_recipe()
-	_last_operation = "已恢复 %d 个选中对象/路径的阴影擦除" % restored
+	_last_operation = _message("status.erase_restored", [restored])
 	return {"ok": true, "restored": restored, "map_data_saved": saved}
 
 
@@ -3548,20 +3655,20 @@ func _update_status():
 	if _generation_in_progress or not _generation_queue.empty():
 		var progress = "%d/%d" % [_generation_batch_done, _generation_batch_total]
 		if _generation_in_progress and _active_generation_node_key != "":
-			_status_label.text = "正在生成目标 %s · %s 完成 · 队列 %d" % [_active_generation_node_key, progress, _generation_queue.size()]
+			_status_label.text = _display_message(_message("status.generating", [_active_generation_node_key, progress, _generation_queue.size()]))
 		else:
-			_status_label.text = "等待生成 · %s 完成 · 队列 %d" % [progress, _generation_queue.size()]
+			_status_label.text = _display_message(_message("status.waiting", [progress, _generation_queue.size()]))
 	elif _parameter_refresh_pending:
 		var target_count = _parameter_refresh_node_ids.size()
 		if _parameter_refresh_global:
 			target_count = max(target_count, _enabled_node_ids.size())
-		_status_label.text = "等待参数稳定 · %.1f 秒后刷新 %d 个目标" % [max(0.0, _parameter_refresh_delay), target_count]
+		_status_label.text = _display_message(_message("status.debounce", [max(0.0, _parameter_refresh_delay), target_count]))
 	elif _eraser_has_closed_pending_jobs():
-		_status_label.text = "正在更新擦除…"
-	elif _last_error != "":
-		_status_label.text = "错误：" + _last_error
+		_status_label.text = _display_message(_message("status.erasing"))
+	elif _has_message(_last_error):
+		_status_label.text = _display_message(_message("status.error", [_last_error]))
 	else:
-		_status_label.text = _last_operation
+		_status_label.text = _display_message(_last_operation)
 
 
 func _eraser_has_closed_pending_jobs() -> bool:
@@ -3572,18 +3679,18 @@ func _eraser_has_closed_pending_jobs() -> bool:
 	return false
 
 
-func _operation_error(message : String) -> Dictionary:
+func _operation_error(message) -> Dictionary:
 	_last_error = message
 	_last_notice = ""
-	_last_operation = "操作失败"
-	return {"ok": false, "error": message}
+	_last_operation = _message("status.failed")
+	return {"ok": false, "error": _display_message(message)}
 
 
-func _operation_notice(message : String, reason : String) -> Dictionary:
+func _operation_notice(message, reason : String) -> Dictionary:
 	_last_error = ""
 	_last_notice = message
 	_last_operation = message
-	return {"ok": false, "notice": message, "reason": reason}
+	return {"ok": false, "notice": _display_message(message), "reason": reason}
 
 
 func get_diagnostics() -> Dictionary:
@@ -3698,9 +3805,10 @@ func get_diagnostics() -> Dictionary:
 		"eraser_gpu_last_cpu_composite_frames": _eraser_gpu_last_cpu_composite_frames,
 		"eraser_last_backend": _eraser_last_backend,
 		"mod_map_data_available": typeof(Global.ModMapData) == TYPE_DICTIONARY,
-		"last_operation": _last_operation,
-		"last_error": _last_error,
-		"last_notice": _last_notice,
+		"language": language,
+		"last_operation": _display_message(_last_operation),
+		"last_error": _display_message(_last_error),
+		"last_notice": _display_message(_last_notice),
 		"selected_type": _last_selection_type,
 		"selected_type_code": _last_selection_type_code,
 		"selected_count": _last_selection_count,
@@ -3719,6 +3827,8 @@ func get_diagnostics() -> Dictionary:
 
 
 func _sync_controls():
+	if is_instance_valid(_language_selector):
+		_language_selector.select(0 if language == "zh_CN" else 1)
 	if _angle_slider == null:
 		return
 	_syncing_controls = true
@@ -3731,45 +3841,45 @@ func _sync_controls():
 	_blur_slider.value = float(settings.blur_radius)
 	_opacity_slider.value = float(settings.opacity) * 100.0
 	if _angle_value_label != null:
-		_angle_value_label.text = "方向 °"
+		_angle_value_label.text = _display_message(_message("label.direction"))
 	if _distance_value_label != null:
-		_distance_value_label.text = "距离 px"
+		_distance_value_label.text = _display_message(_message("label.distance"))
 	if _blur_value_label != null:
-		_blur_value_label.text = "柔化 px"
+		_blur_value_label.text = _display_message(_message("label.softness"))
 	if _opacity_value_label != null:
-		_opacity_value_label.text = "不透明度 %"
+		_opacity_value_label.text = _display_message(_message("label.opacity"))
 	var current_mode = str(settings.mode)
-	_set_panel_button_text(_offset_mode_button, "短投影 ✓" if current_mode == "offset" else "短投影")
-	_set_panel_button_text(_sweep_mode_button, "连续延展 ✓" if current_mode == "sweep" else "连续延展")
+	_set_panel_button_text(_offset_mode_button, _message("projection.offset_active") if current_mode == "offset" else _message("projection.offset"))
+	_set_panel_button_text(_sweep_mode_button, _message("projection.sweep_active") if current_mode == "sweep" else _message("projection.sweep"))
 	if _color_label != null:
 		var color = _parse_color(str(settings.color), shadow_color)
-		_color_label.text = "颜色 · #" + color.to_html(false)
+		_color_label.text = _display_message(_message("label.color", [color.to_html(false)]))
 		_sync_color_palette_node(_color_palette, color)
 	if _follow_button != null:
 		_follow_button.pressed = follow_enabled
 	if _preview_button != null:
 		_preview_button.pressed = preview_enabled
-	_set_panel_button_text(_global_adjust_button, "全局调整 ✓" if adjustment_mode == "global" else "全局调整")
-	_set_panel_button_text(_individual_adjust_button, "单独调整 ✓" if adjustment_mode == "individual" else "单独调整")
+	_set_panel_button_text(_global_adjust_button, _message("mode.global_active") if adjustment_mode == "global" else _message("mode.global"))
+	_set_panel_button_text(_individual_adjust_button, _message("mode.individual_active") if adjustment_mode == "individual" else _message("mode.individual"))
 	if _use_global_button != null:
 		_use_global_button.visible = adjustment_mode == "individual"
 	if _scope_label != null:
 		if adjustment_mode == "global":
-			_scope_label.text = "作用范围：全局默认"
+			_scope_label.text = _display_message(_message("scope.global"))
 		elif selected_ids.empty():
-			_scope_label.text = "作用范围：单独调整 · 尚无目标；全局默认不变"
+			_scope_label.text = _display_message(_message("scope.individual_empty"))
 		else:
-			_scope_label.text = "作用范围：单独调整 · 修改将应用到 %d 个目标" % selected_ids.size()
+			_scope_label.text = _display_message(_message("scope.individual", [selected_ids.size()]))
 	if _eraser_button != null:
 		_eraser_button.pressed = eraser_enabled
 	if _eraser_radius_slider != null:
 		_eraser_radius_slider.value = eraser_radius * 2.0
 	if _eraser_radius_value_label != null:
-		_eraser_radius_value_label.text = "直径 px"
+		_eraser_radius_value_label.text = _display_message(_message("eraser.diameter"))
 	if _eraser_hardness_slider != null:
 		_eraser_hardness_slider.value = eraser_hardness * 100.0
 	if _eraser_hardness_value_label != null:
-		_eraser_hardness_value_label.text = "硬度 %"
+		_eraser_hardness_value_label.text = _display_message(_message("eraser.hardness"))
 	_syncing_controls = false
 
 

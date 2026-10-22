@@ -21,6 +21,7 @@ if (Test-Path -LiteralPath $outputFull) {
 $required = @(
     'contour_shadows.ddmod',
     'scripts\contour_shadows.gd',
+    'scripts\library\localization.gd',
     'scripts\library\shadow_renderer.gd',
     'scripts\library\shadow_renderer_cpu_fallback.gd',
     'scripts\library\shadow_geometry.gd',

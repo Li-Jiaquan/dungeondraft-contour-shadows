@@ -88,6 +88,7 @@ class MockUiControl:
 	signal item_selected(value)
 	signal toggled(value)
 	var value = 0.0
+	var text = ""
 	var pressed_value = false
 	var pressed = false
 
@@ -136,11 +137,13 @@ class MockToolPanel:
 
 	func CreateButton(label, _icon):
 		var control = _control()
+		control.text = str(label)
 		buttons[str(label)] = control
 		return control
 
 	func CreateCheckButton(_label, _icon, initial):
 		var control = _control()
+		control.text = str(_label)
 		control.pressed_value = initial
 		control.pressed = initial
 		return control
@@ -269,7 +272,100 @@ func _run():
 	_test_host_selection_workflow()
 	yield(_test_host_responsive_action_buttons(), "completed")
 	_test_host_visual_signature()
+	yield(_test_bilingual_ui(), "completed")
 	_finish()
+
+
+func _test_bilingual_ui():
+	var host_script = load("res://.staged/contour_shadows.gd")
+	var fixture = _mock_host_fixture(host_script)
+	var toolset = MockToolset.new()
+	fixture["global"].Editor.Toolset = toolset
+	fixture.host._create_tool_panel()
+	mock_ui_panels.append(toolset.panel)
+	var host = fixture.host
+	var catalog = host._translator
+	var regex = RegEx.new()
+	regex.compile("%([.][0-9]+)?[sdf]")
+	var complete = true
+	var formats = true
+	for key in catalog.TEXT.keys():
+		var pair = catalog.TEXT[key]
+		complete = complete and pair.size() == 2 and not str(pair[0]).empty() and not str(pair[1]).empty()
+		var signatures = []
+		for index in range(2):
+			var signature = []
+			var arguments = []
+			for match_result in regex.search_all(str(pair[index])):
+				var placeholder = match_result.get_string()
+				signature.append(placeholder)
+				arguments.append("sample" if placeholder.ends_with("s") else 2)
+			signatures.append(signature)
+			var rendered = catalog.text(str(key), "zh_CN" if index == 0 else "en", arguments)
+			formats = formats and not rendered.empty()
+		formats = formats and signatures[0] == signatures[1]
+	_expect(complete, "all bilingual catalog entries contain both Chinese and English")
+	_expect(formats, "all bilingual message placeholders match and format in both languages")
+	var unknown = []
+	for binding in host._localized_controls:
+		if not catalog.TEXT.has(str(binding.message.key)):
+			unknown.append(str(binding.message.key))
+	_expect(unknown.empty(), "every registered UI control resolves a catalog ID")
+
+	var prop = _mock_prop(fixture.level, 840)
+	host._geometry = geometry
+	host._renderer = renderer
+	host._shadow_mask = shadow_mask
+	fixture.select_tool._selected = [prop]
+	host._capture_selection_snapshot()
+	host._overrides = {"840": {"opacity": 0.5}}
+	host._erasures = {"840": [{"points": [[1, 1]], "radius": 1, "hardness": 0.7}]}
+	host._enabled_node_ids = {"840": true}
+	host._save_map_recipe()
+	var recipe_before = JSON.print(fixture["global"].ModMapData)
+	var selection_before = host._selection_snapshot_node_ids.duplicate()
+	var queue_result = host.generate_selected()
+	var queue_before = host._generation_queue.size()
+	var generation_epoch = host._generation_epoch
+	var selected_button = host._selection_action_button_a
+	var shape_before = host._source_signature(prop)
+	host._language_selector.select(1)
+	host._language_selector.emit_signal("item_selected", 1)
+	_expect(host.language == "en" and host._language_selector.selected == 1, "language dropdown selects English through its connected callback")
+	_expect(host._selection_action_button_a == selected_button and selected_button.text == "Select Objects", "language switching relabels the existing action controls")
+	_expect(str(host.get_diagnostics().last_operation).find("Selected sources") >= 0 and host._status_label.text.find("queued") >= 0, "English progress displays nested queue labels and counts")
+	_expect(host._generation_queue.size() == queue_before and host._generation_epoch == generation_epoch and int(queue_result.get("queued", 0)) == 1, "switching language keeps pending render jobs intact")
+	_expect(JSON.print(fixture["global"].ModMapData) == recipe_before and host._selection_snapshot_node_ids == selection_before and host._source_signature(prop) == shape_before, "language changes preserve the map recipe, overrides, strokes, selection, and source signature")
+	host._generation_queue.clear()
+	host._pending_node_ids.clear()
+	host._generation_in_progress = false
+	host.set_adjustment_mode("individual")
+	host._update_independent_controls()
+	_expect(host._scope_label.text.find("1 targets") >= 0, "English independent scope formats the current target count")
+	host._operation_error(host._message("error.recipe_version", [99]))
+	host._update_status()
+	_expect(host._status_label.text.find("version 99") >= 0 and host._status_label.text.begins_with("Error:"), "English error status formats its dynamic recipe version")
+	host.set_language("zh_CN", false)
+	_expect(host._status_label.text.find("版本 99") >= 0 and selected_button.text == "选择对象", "switching back immediately retranslates an existing error and controls")
+	var invalid_language = host.set_language("fr", false)
+	_expect(not invalid_language.ok and host.language == "zh_CN", "unsupported language requests preserve the current preference")
+	host._last_error = ""
+	host.set_language("en", true)
+	var reload_fixture = _mock_host_fixture(host_script)
+	reload_fixture.host._load_global_settings()
+	reload_fixture["global"].ModMapData = fixture["global"].ModMapData.duplicate(true)
+	reload_fixture.host._load_map_recipe()
+	_expect(reload_fixture.host.language == "en", "English preference survives settings reload and map recipe loading")
+	_expect(not host._settings_dictionary().has("language") and not fixture["global"].ModMapData.contour_shadows.settings.has("language"), "language is excluded from map settings and parameter dictionaries")
+	host._generation_queue.clear()
+	host._pending_node_ids.clear()
+	for width in [180.0, 232.0, 400.0]:
+		toolset.panel.Align.rect_size.x = width
+		host._update_responsive_action_layout(true)
+		yield(self, "idle_frame")
+		_expect(host._selection_action_row_vertical == (width < 350.0), "English action layout adapts at width %d" % int(width))
+	selected_button.press()
+	_expect(fixture["global"].Editor.ActiveToolName == "SelectTool", "translated selection action remains connected after language changes and resizing")
 
 func _test_manifest_and_host():
 	var manifest_file = File.new()

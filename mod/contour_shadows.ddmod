@@ -1,9 +1,9 @@
 {
-  "name": "轮廓投影",
+  "name": "轮廓投影 / Contour Shadows",
   "unique_id": "Local.ContourShadows",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "author": "Local",
-  "description": "从物件和路径的真实轮廓生成投影，支持路径过渡、独立参数与局部擦除，改进连续投影质量和参数交互。",
+  "description": "从物件和路径的真实轮廓生成可编辑投影，支持连续延展、局部擦除与中英双语界面。 / Create editable contour shadows for Props and Pathways with extrusion, local erasing, and Chinese/English UI.",
   "dd_version": "1.2.0.0",
   "dependencies": []
 }

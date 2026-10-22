@@ -86,6 +86,7 @@ Copy-Item -LiteralPath $required[3] -Destination (Join-Path $nestedLibraryFull '
 Copy-Item -LiteralPath $required[4] -Destination (Join-Path $nestedLibraryFull 'path_source.gd') -Force
 Copy-Item -LiteralPath $required[5] -Destination (Join-Path $nestedLibraryFull 'shadow_mask.gd') -Force
 Copy-Item -LiteralPath $required[7] -Destination (Join-Path $nestedLibraryFull 'shadow_renderer_cpu_fallback.gd') -Force
+Copy-Item -LiteralPath (Join-Path $libraryRoot 'localization.gd') -Destination (Join-Path $nestedLibraryFull 'localization.gd') -Force
 
 $reportPath = Join-Path $stageRoot 'report.txt'
 if (Test-Path -LiteralPath $reportPath -PathType Leaf) {

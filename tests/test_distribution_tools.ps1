@@ -43,6 +43,8 @@ try {
 	$assertions++
 	Assert-Condition (Test-Path -LiteralPath (Join-Path $freshPlugin 'scripts/library/shadow_mask.gd') -PathType Leaf) 'fresh install copies the local erasure mask'
 	$assertions++
+    Assert-Condition (Test-Path -LiteralPath (Join-Path $freshPlugin 'scripts/library/localization.gd') -PathType Leaf) 'fresh install copies the bilingual localization catalog'
+	$assertions++
     Assert-Condition (@(Get-ChildItem -LiteralPath (Split-Path -Parent $freshMods) -Directory -Filter 'contour_shadows.backup.*').Count -eq 0) 'fresh install creates no backup'
     $assertions++
 
