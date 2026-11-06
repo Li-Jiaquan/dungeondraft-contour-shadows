@@ -6,6 +6,20 @@
 
 Contour Shadows is a GDScript mod for Dungeondraft. It creates editable, contour-based shadows for Props and Pathways. The source texture and pathway stay intact; the mod adds and manages its own shadow nodes.
 
+### Before and after
+
+The same map before and after adding contour shadows to its objects:
+
+| Before | After |
+| --- | --- |
+| ![Map before adding contour shadows](docs/images/before.png) | ![Map after adding contour shadows](docs/images/after.png) |
+
+### Plugin interface
+
+The English panel includes target selection, shadow parameters, the eraser, and advanced controls.
+
+<img src="docs/images/interface-en.png" alt="Contour Shadows English interface" width="326">
+
 ### Features
 
 - Create a short offset shadow or a continuous extruded shadow, with adjustable direction, distance, softness, opacity, and color.
@@ -72,6 +86,20 @@ The package script requires an absolute output path outside `mod/` and will not 
 ## 简体中文
 
 轮廓投影是面向 Dungeondraft 的 GDScript mod。它根据 Prop 的 Sprite 或 Pathway 的可见轮廓生成可编辑阴影。插件会创建并管理自己的阴影节点，不修改原始纹理或路径。
+
+### 使用前后对比
+
+同一张地图在添加物件轮廓投影前后的效果：
+
+| 使用前 | 使用后 |
+| --- | --- |
+| ![添加轮廓投影前的地图](docs/images/before.png) | ![添加轮廓投影后的地图](docs/images/after.png) |
+
+### 插件界面
+
+中文面板包括目标选择、投影参数、阴影橡皮擦和高级维护选项。
+
+<img src="docs/images/interface-zh.png" alt="轮廓投影中文界面" width="326">
 
 ### 功能
 
